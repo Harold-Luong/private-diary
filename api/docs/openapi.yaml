@@ -1,0 +1,2061 @@
+openapi: 3.0.3
+info:
+  title: Private Diary API
+  version: 0.1.0
+  description: API MVP đã triển khai bằng JavaScript/Node.js. Quy tắc nghiệp vụ/transaction chi tiết tại api-design.md.
+    Strict body/query, không nhận trường lạ/query lặp. JSON <=1 MiB. Mọi response private, no-store và
+    có X-Request-Id. Các constraint liên trường, ownership, IANA timezone, ngày hợp lệ và quota đồng thời
+    cần backend kiểm tra.
+servers:
+- url: https://api.diary.example.com/api/v1
+  description: Production minh họa; thay domain khi triển khai
+- url: http://localhost:{port}/api/v1
+  description: Local; cần cấu hình cookie local riêng hoặc HTTPS proxy
+  variables:
+    port:
+      default: '3000'
+      description: PORT trong api/.env. Local HTTP dùng cookie diary_refresh.
+tags:
+- name: Auth
+- name: Users
+- name: Diaries
+- name: Moods
+- name: Tags
+- name: Images
+security:
+- bearerAuth: []
+paths:
+  /auth/register:
+    post:
+      operationId: register
+      tags:
+      - Auth
+      summary: Đăng ký và tạo phiên
+      responses:
+        '201':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshCookie'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokensResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      parameters:
+      - $ref: '#/components/parameters/Origin'
+      - $ref: '#/components/parameters/CsrfHeader'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+  /auth/login:
+    post:
+      operationId: login
+      tags:
+      - Auth
+      summary: Đăng nhập
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokensResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+      parameters:
+      - $ref: '#/components/parameters/Origin'
+      - $ref: '#/components/parameters/CsrfHeader'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      tags:
+      - Auth
+      summary: Xoay vòng refresh token
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokensResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '401':
+          $ref: '#/components/responses/InvalidRefresh'
+      description: Không body. Rotate nguyên tử, phiên tối đa 30 ngày từ login. Reuse thu hồi phiên. Frontend
+        gộp request refresh giữa các tab; không retry token cũ sau lỗi mạng.
+      parameters:
+      - $ref: '#/components/parameters/Origin'
+      - $ref: '#/components/parameters/CsrfHeader'
+      security:
+      - refreshCookie: []
+  /auth/logout:
+    post:
+      operationId: logout
+      tags:
+      - Auth
+      summary: Thu hồi phiên hiện tại và xóa cookie
+      responses:
+        '204':
+          description: Không có body.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Set-Cookie:
+              $ref: '#/components/headers/RefreshCookie'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+      description: Không body. Cookie thiếu/sai/revoked vẫn 204 sau CSRF check. Middleware kiểm tra sid
+        để access token phiên đã revoke bị chặn ở request mới.
+      parameters:
+      - $ref: '#/components/parameters/Origin'
+      - $ref: '#/components/parameters/CsrfHeader'
+      security:
+      - {}
+      - refreshCookie: []
+  /users/me:
+    get:
+      operationId: getCurrentUser
+      tags:
+      - Users
+      summary: Đọc profile/settings
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      operationId: updateCurrentUser
+      tags:
+      - Users
+      summary: Cập nhật profile/settings
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+      description: Merge settings theo trường; đổi timezone không dịch diaryDate cũ. Không đổi email/password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+  /diaries:
+    post:
+      operationId: createDiary
+      tags:
+      - Diaries
+      summary: Tạo nhật ký
+      responses:
+        '201':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiaryDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+      description: '{} tạo draft rỗng. PUBLISHED cần content không trắng và diaryDate không sau hôm nay
+        theo timezone user. Mood/tags phải hợp lệ.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDiaryRequest'
+    get:
+      operationId: listDiaries
+      tags:
+      - Diaries
+      summary: Tìm kiếm/lọc/phân trang nhật ký
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiaryListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      description: Filters AND; filter ID không tồn tại/khác user trả []; sort thêm id cùng chiều. Bài
+        đã xóa luôn bị loại. Page vượt dữ liệu trả []. Items/count cùng snapshot.
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/Limit'
+      - name: keyword
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description: Trim; literal substring không phân biệt hoa/thường trong title OR content, không
+          bỏ dấu.
+      - $ref: '#/components/parameters/Status'
+      - name: moodId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: tagId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - diaryDate:asc
+          - diaryDate:desc
+          - createdAt:asc
+          - createdAt:desc
+          - updatedAt:asc
+          - updatedAt:desc
+          default: diaryDate:desc
+  /diaries/calendar:
+    get:
+      operationId: getDiaryCalendar
+      tags:
+      - Diaries
+      summary: Đếm nhật ký theo từng ngày trong tháng
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      description: Theo diaryDate, đủ mọi ngày trong tháng. Counts sau status filter; không tính deleted.
+      parameters:
+      - name: year
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 9999
+      - name: month
+        in: query
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 12
+      - $ref: '#/components/parameters/Status'
+  /diaries/statistics:
+    get:
+      operationId: getDiaryStatistics
+      tags:
+      - Diaries
+      summary: Thống kê nhật ký trong khoảng ngày
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatisticsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      description: fromDate/toDate cùng có hoặc cùng vắng; vắng dùng tháng hiện tại theo timezone user.
+        Khoảng inclusive <= 366 ngày. Tổng sau status filter. activeDays đếm distinct diaryDate; average
+        theo bài có mood. Distribution bỏ nhóm 0, null cuối, tổng count = totalEntries.
+      parameters:
+      - $ref: '#/components/parameters/FromDate'
+      - $ref: '#/components/parameters/ToDate'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - DRAFT
+          - PUBLISHED
+          - ALL
+          default: PUBLISHED
+  /diaries/{id}:
+    get:
+      operationId: getDiary
+      tags:
+      - Diaries
+      summary: Chi tiết nhật ký
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiaryDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+    patch:
+      operationId: updateDiary
+      tags:
+      - Diaries
+      summary: Sửa/lưu nháp/xuất bản nhật ký
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiaryDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: Validate trạng thái sau merge, cho phép DRAFT ↔ PUBLISHED. Ghi diary/tags trong transaction;
+        cùng sửa một trường thì lần ghi sau thắng.
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDiaryRequest'
+    delete:
+      operationId: deleteDiary
+      tags:
+      - Diaries
+      summary: Xóa mềm nhật ký
+      responses:
+        '204':
+          description: Không có body.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: Đặt deletedAt, ghi cleanup job cùng transaction. Mọi route ảnh ngừng truy cập ngay
+        sau commit. Lặp delete trả 404.
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+  /moods:
+    get:
+      operationId: listMoods
+      tags:
+      - Moods
+      summary: Danh mục cảm xúc hệ thống
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MoodListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      description: Cần bearer. Sắp score ASC rồi code ASC; score 1–5. Không CRUD mood trong MVP.
+  /tags:
+    get:
+      operationId: listTags
+      tags:
+      - Tags
+      summary: Tags cá nhân
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+      description: Sort name ASC, id ASC. Chỉ tags thuộc user; phân trang giống diaries.
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/Limit'
+      - name: keyword
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 50
+        description: Trim, literal substring không phân biệt hoa/thường.
+    post:
+      operationId: createTag
+      tags:
+      - Tags
+      summary: Tạo tag cá nhân
+      responses:
+        '201':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagRequest'
+  /tags/{tagId}:
+    patch:
+      operationId: updateTag
+      tags:
+      - Tags
+      summary: Đổi tên tag
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      description: Giữ liên kết diary; không đổi Diary.updatedAt.
+      parameters:
+      - $ref: '#/components/parameters/TagId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagRequest'
+    delete:
+      operationId: deleteTag
+      tags:
+      - Tags
+      summary: Xóa tag và liên kết với nhật ký
+      responses:
+        '204':
+          description: Không có body.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: Hard delete tag + DiaryTag trong transaction; giữ diary, không đổi Diary.updatedAt.
+        Lặp delete trả 404.
+      parameters:
+      - $ref: '#/components/parameters/TagId'
+  /diaries/{id}/images:
+    post:
+      operationId: uploadDiaryImage
+      tags:
+      - Images
+      summary: Upload một ảnh riêng tư
+      responses:
+        '201':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+      description: Một field file, không field khác. <=10,000,000 bytes/file; multipart <=10,100,000 bytes.
+        JPEG/PNG/WebP, MIME khớp chữ ký. <=10 ảnh kể cả upload đồng thời. Kiểm tra auth trước đọc toàn
+        body, recheck diary/quota khi commit. Giữ bytes gốc, chưa loại EXIF/GPS.
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File không rỗng; kiểm tra kích thước khi stream.
+              required:
+              - file
+            encoding:
+              file:
+                contentType: image/jpeg, image/png, image/webp
+    get:
+      operationId: listDiaryImages
+      tags:
+      - Images
+      summary: Liệt kê metadata ảnh
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: Theo sortOrder ASC; [] khi chưa có ảnh; không trả R2 objectKey.
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+  /diaries/{id}/images/order:
+    patch:
+      operationId: reorderDiaryImages
+      tags:
+      - Images
+      summary: Sắp xếp toàn bộ ảnh
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMedia'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+      description: Trùng ID = 400; tập ID khác ảnh hiện tại = 409 IMAGE_ORDER_CONFLICT (kể cả ID ngoài
+        quyền). Khóa diary, ghi sortOrder 0..n-1 và Diary.updatedAt trong transaction.
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageOrderRequest'
+  /diaries/{id}/images/{imageId}/content:
+    get:
+      operationId: getDiaryImageContent
+      tags:
+      - Images
+      summary: Đọc bytes ảnh đã xác thực
+      responses:
+        '200':
+          description: Thành công.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+            Content-Length:
+              schema:
+                type: integer
+                minimum: 1
+                maximum: 10000000
+            Content-Disposition:
+              schema:
+                type: string
+                enum:
+                - inline
+            X-Content-Type-Options:
+              schema:
+                type: string
+                enum:
+                - nosniff
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/StorageUnavailable'
+      description: Ràng buộc image/user/diary chưa xóa. Thành công trả binary, lỗi trả JSON. Bỏ qua Range/conditional
+        headers, trả toàn bộ file 200. Không redirect public URL.
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+      - $ref: '#/components/parameters/ImageId'
+  /diaries/{id}/images/{imageId}:
+    delete:
+      operationId: deleteDiaryImage
+      tags:
+      - Images
+      summary: Xóa ảnh và lên lịch xóa R2
+      responses:
+        '204':
+          description: Không có body.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/RequestId'
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      description: Xóa metadata, compact sortOrder, cập nhật diary và ghi outbox trong transaction. R2
+        delete retry được; sau commit GET trả 404. Lặp delete trả 404.
+      parameters:
+      - $ref: '#/components/parameters/DiaryId'
+      - $ref: '#/components/parameters/ImageId'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT 15 phút; middleware còn kiểm tra session sid active.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: __Secure-diary_refresh
+      description: HttpOnly, Secure, SameSite=Lax, host-only, Path=/api/v1/auth. Phiên tối đa 30 ngày;
+        rotate mỗi refresh.
+  parameters:
+    DiaryId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Diary thuộc user và chưa xóa.
+    TagId:
+      name: tagId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Tag thuộc user.
+    ImageId:
+      name: imageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Ảnh thuộc đúng diary và user.
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+    Status:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum:
+        - DRAFT
+        - PUBLISHED
+      description: Bỏ qua = cả DRAFT và PUBLISHED.
+    FromDate:
+      name: fromDate
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date
+        pattern: ^\d{4}-\d{2}-\d{2}$
+        description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+      description: Bao gồm ngày này; nếu có toDate thì fromDate <= toDate.
+    ToDate:
+      name: toDate
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date
+        pattern: ^\d{4}-\d{2}-\d{2}$
+        description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+      description: Bao gồm ngày này.
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Bắt buộc khớp chính xác allowlist frontend; CLI cũng gửi header này.
+    CsrfHeader:
+      name: X-CSRF-Protection
+      in: header
+      required: true
+      schema:
+        type: string
+        enum:
+        - '1'
+      description: Custom header bắt buộc để buộc browser preflight.
+  headers:
+    RequestId:
+      description: ID request do server sinh, cũng có trong body lỗi.
+      schema:
+        type: string
+        format: uuid
+    NoStore:
+      description: Không cache dữ liệu riêng tư.
+      schema:
+        type: string
+        enum:
+        - private, no-store
+    RefreshCookie:
+      description: 'Set/rotate cookie host-only __Secure-diary_refresh; HttpOnly; Secure; SameSite=Lax;
+        Path=/api/v1/auth. Max-Age tới hết hạn phiên 30 ngày. Với lỗi refresh 401 hoặc logout: xóa cookie
+        (Max-Age=0).'
+      schema:
+        type: string
+    Location:
+      description: Đường dẫn tài nguyên mới theo API origin.
+      schema:
+        type: string
+    RetryAfter:
+      description: Số giây tới khi có thể thử lại.
+      schema:
+        type: integer
+        minimum: 1
+  responses:
+    BadRequest:
+      description: VALIDATION_ERROR, INVALID_MOOD hoặc INVALID_TAGS; không echo dữ liệu riêng tư.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: UNAUTHENTICATED hoặc ACCESS_TOKEN_EXPIRED.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InvalidCredentials:
+      description: 'INVALID_CREDENTIALS: email/password không đúng.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InvalidRefresh:
+      description: INVALID_REFRESH_TOKEN hoặc REFRESH_TOKEN_REUSED; xóa cookie.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        Set-Cookie:
+          $ref: '#/components/headers/RefreshCookie'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: 'CSRF_FAILED: Origin/header không hợp lệ.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: 'RESOURCE_NOT_FOUND: không tồn tại, không sở hữu hoặc đã xóa.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: EMAIL_ALREADY_EXISTS, TAG_ALREADY_EXISTS, IMAGE_LIMIT_EXCEEDED hoặc IMAGE_ORDER_CONFLICT
+        tùy operation.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: 'PAYLOAD_TOO_LARGE: vượt giới hạn body/file.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedMedia:
+      description: 'UNSUPPORTED_MEDIA_TYPE: sai Content-Type hoặc định dạng file.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RateLimited:
+      description: 'RATE_LIMITED: vượt quota; chờ Retry-After.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: 'INTERNAL_ERROR: không lộ stack trace hoặc SQL.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    StorageUnavailable:
+      description: 'STORAGE_UNAVAILABLE: lỗi R2 hoặc metadata còn nhưng object thiếu.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/RequestId'
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Settings:
+      type: object
+      additionalProperties: false
+      properties:
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Asia/Ho_Chi_Minh
+          description: IANA timezone hợp lệ; backend kiểm tra semantic.
+        theme:
+          type: string
+          enum:
+          - LIGHT
+          - DARK
+          - SYSTEM
+      required:
+      - timezone
+      - theme
+    User:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          description: Trim rồi lowercase; không sửa dấu chấm hoặc +suffix.
+        displayName:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 150
+        settings:
+          $ref: '#/components/schemas/Settings'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - email
+      - displayName
+      - settings
+      - createdAt
+      - updatedAt
+    AuthTokens:
+      type: object
+      additionalProperties: false
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          enum:
+          - Bearer
+        expiresIn:
+          type: integer
+          enum:
+          - 900
+        user:
+          $ref: '#/components/schemas/User'
+      required:
+      - accessToken
+      - tokenType
+      - expiresIn
+      - user
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          description: Trim rồi lowercase; không sửa dấu chấm hoặc +suffix.
+        password:
+          type: string
+          minLength: 12
+          maxLength: 128
+          format: password
+          writeOnly: true
+        displayName:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 150
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Asia/Ho_Chi_Minh
+          description: IANA timezone hợp lệ; backend kiểm tra semantic.
+          default: Asia/Ho_Chi_Minh
+      required:
+      - email
+      - password
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          description: Trim rồi lowercase; không sửa dấu chấm hoặc +suffix.
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          format: password
+          writeOnly: true
+      required:
+      - email
+      - password
+    UpdateUserRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+          nullable: true
+          minLength: 1
+          maxLength: 150
+        settings:
+          type: object
+          additionalProperties: false
+          properties:
+            timezone:
+              type: string
+              minLength: 1
+              maxLength: 100
+              example: Asia/Ho_Chi_Minh
+              description: IANA timezone hợp lệ; backend kiểm tra semantic.
+            theme:
+              type: string
+              enum:
+              - LIGHT
+              - DARK
+              - SYSTEM
+          minProperties: 1
+      minProperties: 1
+    Mood:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          maxLength: 30
+        name:
+          type: string
+          maxLength: 100
+        emoji:
+          type: string
+          maxLength: 20
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+      required:
+      - id
+      - code
+      - name
+      - emoji
+      - score
+    Tag:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+      required:
+      - id
+      - name
+    TagRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Trim + Unicode NFC; không trắng; unique theo user, phân biệt hoa/thường.
+      required:
+      - name
+    Image:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        diaryId:
+          type: string
+          format: uuid
+        originalName:
+          type: string
+          nullable: true
+          maxLength: 255
+        mimeType:
+          type: string
+          enum:
+          - image/jpeg
+          - image/png
+          - image/webp
+        sizeBytes:
+          type: integer
+          minimum: 1
+          maximum: 10000000
+        sortOrder:
+          type: integer
+          minimum: 0
+          maximum: 9
+        contentUrl:
+          type: string
+          pattern: ^/api/v1/diaries/
+          description: Đường dẫn tương đối theo API origin, cần bearer token; không phải public URL.
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - id
+      - diaryId
+      - originalName
+      - mimeType
+      - sizeBytes
+      - sortOrder
+      - contentUrl
+      - createdAt
+    CreateDiaryRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          nullable: true
+          maxLength: 255
+          description: Trim; chuỗi trắng chuẩn hóa thành null.
+          default: null
+        content:
+          type: string
+          maxLength: 100000
+          description: Plain text, giữ whitespace. PUBLISHED cần content.trim() khác rỗng.
+          default: ''
+        diaryDate:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone. Bỏ qua thì dùng hôm nay theo
+            timezone user.
+        status:
+          type: string
+          enum:
+          - DRAFT
+          - PUBLISHED
+          default: DRAFT
+        moodId:
+          type: string
+          format: uuid
+          nullable: true
+          default: null
+        tagIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 20
+          uniqueItems: true
+          default: []
+    UpdateDiaryRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          nullable: true
+          maxLength: 255
+          description: Trim; chuỗi trắng chuẩn hóa thành null.
+        content:
+          type: string
+          maxLength: 100000
+          description: Plain text, giữ whitespace. PUBLISHED cần content.trim() khác rỗng.
+        diaryDate:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+        status:
+          type: string
+          enum:
+          - DRAFT
+          - PUBLISHED
+        moodId:
+          type: string
+          format: uuid
+          nullable: true
+        tagIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 20
+          uniqueItems: true
+      minProperties: 1
+      description: 'Merge trường được gửi, rồi validate toàn bộ trạng thái. Mảng thay thế toàn bộ. Cùng
+        trường: lần ghi sau thắng.'
+    DiaryDetail:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          nullable: true
+          maxLength: 255
+        diaryDate:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+        status:
+          type: string
+          enum:
+          - DRAFT
+          - PUBLISHED
+        mood:
+          type: object
+          additionalProperties: false
+          properties:
+            id:
+              type: string
+              format: uuid
+            code:
+              type: string
+              maxLength: 30
+            name:
+              type: string
+              maxLength: 100
+            emoji:
+              type: string
+              maxLength: 20
+            score:
+              type: integer
+              minimum: 1
+              maximum: 5
+          required:
+          - id
+          - code
+          - name
+          - emoji
+          - score
+          nullable: true
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+          maxItems: 20
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        content:
+          type: string
+          maxLength: 100000
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/Image'
+          maxItems: 10
+      required:
+      - id
+      - title
+      - diaryDate
+      - status
+      - mood
+      - tags
+      - createdAt
+      - updatedAt
+      - content
+      - images
+    DiarySummary:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          nullable: true
+          maxLength: 255
+        diaryDate:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+        status:
+          type: string
+          enum:
+          - DRAFT
+          - PUBLISHED
+        mood:
+          type: object
+          additionalProperties: false
+          properties:
+            id:
+              type: string
+              format: uuid
+            code:
+              type: string
+              maxLength: 30
+            name:
+              type: string
+              maxLength: 100
+            emoji:
+              type: string
+              maxLength: 20
+            score:
+              type: integer
+              minimum: 1
+              maximum: 5
+          required:
+          - id
+          - code
+          - name
+          - emoji
+          - score
+          nullable: true
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+          maxItems: 20
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        excerpt:
+          type: string
+          maxLength: 200
+        imageCount:
+          type: integer
+          minimum: 0
+          maximum: 10
+      required:
+      - id
+      - title
+      - diaryDate
+      - status
+      - mood
+      - tags
+      - createdAt
+      - updatedAt
+      - excerpt
+      - imageCount
+    ImageOrderRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        imageIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          uniqueItems: true
+          maxItems: 10
+          description: Đúng toàn bộ ảnh hiện tại; [] chỉ hợp lệ nếu diary chưa có ảnh.
+      required:
+      - imageIds
+    PaginationMeta:
+      type: object
+      additionalProperties: false
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          maximum: 10000
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+        total:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+      required:
+      - page
+      - limit
+      - total
+      - totalPages
+    CalendarDay:
+      type: object
+      additionalProperties: false
+      properties:
+        date:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+        total:
+          type: integer
+          minimum: 0
+        draftCount:
+          type: integer
+          minimum: 0
+        publishedCount:
+          type: integer
+          minimum: 0
+      required:
+      - date
+      - total
+      - draftCount
+      - publishedCount
+    Calendar:
+      type: object
+      additionalProperties: false
+      properties:
+        year:
+          type: integer
+          minimum: 1
+          maximum: 9999
+        month:
+          type: integer
+          minimum: 1
+          maximum: 12
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Asia/Ho_Chi_Minh
+          description: IANA timezone hợp lệ; backend kiểm tra semantic.
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarDay'
+          minItems: 28
+          maxItems: 31
+      description: Đủ mọi ngày của tháng theo thứ tự tăng dần, kể cả ngày không bài; counts sau filter
+        status.
+      required:
+      - year
+      - month
+      - timezone
+      - days
+    MoodCount:
+      type: object
+      additionalProperties: false
+      properties:
+        moodId:
+          type: string
+          format: uuid
+          nullable: true
+        count:
+          type: integer
+          minimum: 1
+      required:
+      - moodId
+      - count
+    Statistics:
+      type: object
+      additionalProperties: false
+      properties:
+        fromDate:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+        toDate:
+          type: string
+          format: date
+          pattern: ^\d{4}-\d{2}-\d{2}$
+          description: Ngày lịch hợp lệ, năm 0001–9999; không đổi timezone.
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: Asia/Ho_Chi_Minh
+          description: IANA timezone hợp lệ; backend kiểm tra semantic.
+        status:
+          type: string
+          enum:
+          - DRAFT
+          - PUBLISHED
+          - ALL
+        totalEntries:
+          type: integer
+          minimum: 0
+        draftCount:
+          type: integer
+          minimum: 0
+        publishedCount:
+          type: integer
+          minimum: 0
+        activeDays:
+          type: integer
+          minimum: 0
+          maximum: 366
+        imageCount:
+          type: integer
+          minimum: 0
+        averageMoodScore:
+          type: number
+          nullable: true
+          minimum: 1
+          maximum: 5
+          description: Trung bình theo bài có mood, làm tròn 2 chữ số; không có mood = null.
+        moodDistribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/MoodCount'
+      required:
+      - fromDate
+      - toDate
+      - timezone
+      - status
+      - totalEntries
+      - draftCount
+      - publishedCount
+      - activeDays
+      - imageCount
+      - averageMoodScore
+      - moodDistribution
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - false
+        error:
+          type: object
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              enum:
+              - VALIDATION_ERROR
+              - INVALID_MOOD
+              - INVALID_TAGS
+              - UNAUTHENTICATED
+              - ACCESS_TOKEN_EXPIRED
+              - INVALID_CREDENTIALS
+              - INVALID_REFRESH_TOKEN
+              - REFRESH_TOKEN_REUSED
+              - CSRF_FAILED
+              - RESOURCE_NOT_FOUND
+              - EMAIL_ALREADY_EXISTS
+              - TAG_ALREADY_EXISTS
+              - IMAGE_LIMIT_EXCEEDED
+              - IMAGE_ORDER_CONFLICT
+              - PAYLOAD_TOO_LARGE
+              - UNSUPPORTED_MEDIA_TYPE
+              - RATE_LIMITED
+              - INTERNAL_ERROR
+              - STORAGE_UNAVAILABLE
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                properties:
+                  field:
+                    type: string
+                  code:
+                    type: string
+                required:
+                - field
+                - code
+          required:
+          - code
+          - message
+        requestId:
+          type: string
+          format: uuid
+      required:
+      - success
+      - error
+      - requestId
+    UserResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          $ref: '#/components/schemas/User'
+      required:
+      - success
+      - data
+    AuthTokensResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          $ref: '#/components/schemas/AuthTokens'
+      required:
+      - success
+      - data
+    TagResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          $ref: '#/components/schemas/Tag'
+      required:
+      - success
+      - data
+    DiaryDetailResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          $ref: '#/components/schemas/DiaryDetail'
+      required:
+      - success
+      - data
+    ImageResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          $ref: '#/components/schemas/Image'
+      required:
+      - success
+      - data
+    CalendarResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          $ref: '#/components/schemas/Calendar'
+      required:
+      - success
+      - data
+    StatisticsResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          $ref: '#/components/schemas/Statistics'
+      required:
+      - success
+      - data
+    MoodListResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Mood'
+      required:
+      - success
+      - data
+    ImageListResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Image'
+      required:
+      - success
+      - data
+    DiaryListResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiarySummary'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+      required:
+      - success
+      - data
+      - meta
+    TagListResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        success:
+          type: boolean
+          enum:
+          - true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+      required:
+      - success
+      - data
+      - meta

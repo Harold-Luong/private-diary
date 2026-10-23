@@ -1,0 +1,172 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum DiaryStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model User {
+  id           String        @id @default(uuid()) @db.Uuid
+  email        String        @unique @db.VarChar(255)
+  passwordHash String        @map("password_hash") @db.VarChar(255)
+  displayName  String?       @map("display_name") @db.VarChar(150)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  settings     UserSetting?
+  diaries      Diary[]
+  tags         Tag[]
+  sessions     AuthSession[]
+
+  @@map("users")
+}
+
+model UserSetting {
+  userId   String @id @map("user_id") @db.Uuid
+  timezone String @default("Asia/Ho_Chi_Minh") @db.VarChar(100)
+  theme    String @default("SYSTEM") @db.VarChar(20)
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+model Diary {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String       @map("user_id") @db.Uuid
+  moodId    String?      @map("mood_id") @db.Uuid
+  title     String?      @db.VarChar(255)
+  content   String       @default("") @db.Text
+  diaryDate DateTime     @map("diary_date") @db.Date
+  status    DiaryStatus  @default(DRAFT)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mood      Mood?        @relation(fields: [moodId], references: [id], onDelete: SetNull)
+  tags      DiaryTag[]
+  images    DiaryImage[]
+  uploads   ImageUploadIntent[]
+
+  @@unique([id, userId])
+  @@index([userId, diaryDate(sort: Desc)])
+  @@index([userId, status])
+  @@map("diaries")
+}
+
+model Mood {
+  id      String  @id @default(uuid()) @db.Uuid
+  code    String  @unique @db.VarChar(30)
+  name    String  @db.VarChar(100)
+  emoji   String  @db.VarChar(20)
+  score   Int
+  diaries Diary[]
+
+  @@map("moods")
+}
+
+model Tag {
+  id      String     @id @default(uuid()) @db.Uuid
+  userId  String     @map("user_id") @db.Uuid
+  name    String     @db.VarChar(50)
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  diaries DiaryTag[]
+
+  @@unique([id, userId])
+  @@unique([userId, name])
+  @@map("tags")
+}
+
+model DiaryTag {
+  diaryId String @map("diary_id") @db.Uuid
+  tagId   String @map("tag_id") @db.Uuid
+  userId  String @map("user_id") @db.Uuid
+  diary   Diary  @relation(fields: [diaryId, userId], references: [id, userId], onDelete: Cascade)
+  tag     Tag    @relation(fields: [tagId, userId], references: [id, userId], onDelete: Cascade)
+
+  @@id([diaryId, tagId])
+  @@index([tagId])
+  @@map("diary_tags")
+}
+
+model DiaryImage {
+  id           String   @id @default(uuid()) @db.Uuid
+  diaryId      String   @map("diary_id") @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  objectKey    String   @unique @map("object_key") @db.VarChar(500)
+  originalName String?  @map("original_name") @db.VarChar(255)
+  mimeType     String   @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int      @map("size_bytes")
+  sortOrder    Int      @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  diary        Diary    @relation(fields: [diaryId, userId], references: [id, userId], onDelete: Cascade)
+
+  @@index([userId, diaryId])
+  @@map("diary_images")
+}
+
+model AuthSession {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime       @map("expires_at") @db.Timestamptz(6)
+  revokedAt DateTime?      @map("revoked_at") @db.Timestamptz(6)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokens    RefreshToken[]
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+model RefreshToken {
+  id           String      @id @default(uuid()) @db.Uuid
+  sessionId    String      @map("session_id") @db.Uuid
+  tokenHash    String      @unique @map("token_hash") @db.VarChar(64)
+  expiresAt    DateTime    @map("expires_at") @db.Timestamptz(6)
+  usedAt       DateTime?   @map("used_at") @db.Timestamptz(6)
+  replacedById String?     @map("replaced_by_id") @db.Uuid
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  session      AuthSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("refresh_tokens")
+}
+
+model ImageUploadIntent {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  diaryId   String   @map("diary_id") @db.Uuid
+  objectKey String   @unique @map("object_key") @db.VarChar(500)
+  status    String   @default("PENDING") @db.VarChar(20)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  diary     Diary    @relation(fields: [diaryId, userId], references: [id, userId], onDelete: Cascade)
+
+  @@index([status, expiresAt])
+  @@map("image_upload_intents")
+}
+
+model StorageDeleteJob {
+  id            String   @id @default(uuid()) @db.Uuid
+  objectKey     String   @unique @map("object_key") @db.VarChar(500)
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([nextAttemptAt])
+  @@map("storage_delete_jobs")
+}
+
+model RateBucket {
+  key       String   @id @db.VarChar(100)
+  hits      Int
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("rate_buckets")
+}
