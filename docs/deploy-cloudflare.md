@@ -50,15 +50,15 @@ Các file đã chuẩn bị:
 ## 3. Tạo database Neon
 
 1. Tạo project **Free**, chọn region gần region Render sẽ dùng.
-2. Mở **Connect**, chọn database/role của project này; lấy connection string PostgreSQL **direct/unpooled** có SSL. Ví dụ định dạng:
+2. Mở **Connect**, chọn database/role của project này; lấy hai connection string PostgreSQL có SSL: pooled cho runtime, direct/unpooled cho migration. Ví dụ định dạng:
 
    ```text
    postgresql://USER:PASSWORD@HOST/DBNAME?sslmode=require
    ```
 
-3. Lưu chuỗi vào biến bí mật `DATABASE_URL` của Render ở bước 5. Không đặt vào Pages hoặc biến `VITE_*`.
+3. Lưu URL pooled vào `DATABASE_URL`, URL direct vào `DATABASE_URL_UNPOOLED` của Render ở bước 5. Không đặt vào Pages hoặc biến `VITE_*`.
 
-Dùng direct URL cho một instance Node nhỏ và migration trong hướng dẫn này. Repo chỉ có một biến `DATABASE_URL`, chưa tách URL migration khỏi URL runtime. Khi cần pooling, cấu hình riêng hai luồng trước khi đổi. [Kết nối Neon](https://neon.com/docs/connect/connect-from-any-app).
+Repo đã tách hai luồng: Prisma/pg dùng `DATABASE_URL` cho app, `prisma.config.js` dùng `DATABASE_URL_UNPOOLED` cho migration. Neon CLI có thể lấy cả hai biến bằng quy trình trong [thiết lập Neon](neon-setup.md). [Kết nối Neon](https://neon.com/docs/connect/connect-from-any-app).
 
 Không chọn Render PostgreSQL Free làm database lâu dài: gói database miễn phí của Render có thời hạn 30 ngày. Neon Free không phải trial 30 ngày. [Render database limits](https://render.com/docs/free#free-postgres), [Neon plans](https://neon.com/pricing).
 
@@ -92,9 +92,11 @@ Trong Render chọn **New → Web Service**, kết nối repo và điền:
 | Build Command | `npm ci --include=dev && npm run db:generate` |
 | Start Command | `npm run db:migrate && npm run db:seed && npm start` |
 | Instance Type | **Free** |
-| Health Check Path | `/api-docs/` |
+| Health Check Path | `/health` |
 
-`/api-docs/` là route có sẵn, không phải health check riêng cho R2. Server chỉ bắt đầu listen sau khi kết nối DB và truy vấn bảng mood thành công. Start command migrate/seed trước khi phục vụ; migrate deploy chỉ áp dụng migration chưa chạy, seed upsert 5 mood hệ thống. Không dùng `prisma migrate dev` hoặc `db push` trên production.
+`GET /health` không cần đăng nhập, chạy `SELECT 1` qua Prisma để kiểm tra DB. Trả `200` với `{"status":"ok","database":"up"}` khi thành công; trả `503` với `{"status":"unavailable","database":"down"}` khi truy vấn lỗi hoặc chưa phản hồi sau 3 giây. Response không cache và không chứa chi tiết lỗi/credentials. Endpoint này không kiểm tra R2 hoặc schema migration. Gọi trực tiếp trên origin Render, ví dụ `https://mot-chut-diary-api.onrender.com/health`.
+
+Server chỉ bắt đầu listen sau khi kết nối DB và truy vấn bảng mood thành công. Start command migrate/seed trước khi phục vụ; migrate deploy chỉ áp dụng migration chưa chạy, seed upsert 5 mood hệ thống. Không dùng `prisma migrate dev` hoặc `db push` trên production.
 
 Không đặt migration ở Pre-deploy Command trong hướng dẫn Free. Prisma CLI nằm trong devDependencies, nên build cần `--include=dev` để start command có thể gọi migration/seed.
 
@@ -105,7 +107,8 @@ Thêm environment variables trong Render:
 | `NODE_VERSION` | `24` |
 | `NODE_ENV` | `production` |
 | `FRONTEND_URL` | `https://mot-chut-diary.pages.dev` — sửa thành URL thật ở bước 6 |
-| `DATABASE_URL` | Connection string Neon ở bước 3 |
+| `DATABASE_URL` | Connection string Neon pooled ở bước 3 |
+| `DATABASE_URL_UNPOOLED` | Connection string Neon direct ở bước 3 |
 | `JWT_SECRET` | Chuỗi ngẫu nhiên mới, tối thiểu 32 bytes |
 | `COOKIE_SECURE` | `true` |
 | `STORAGE_DRIVER` | `r2` |
@@ -200,6 +203,19 @@ npm run build
 `vite dev` vẫn proxy tới localhost bằng `API_PROXY_TARGET`; nó không chạy Pages Function. Các unit test proxy kiểm tra stream, cookie, CSRF, lỗi và redirect bằng upstream giả lập. Chúng không thay thế việc xác nhận credentials R2, Neon và smoke test trên cloud.
 
 ## 8. Vận hành và xử lý lỗi
+
+### Render báo database reached but timed out / Prisma P1002
+
+Đọc phần `Context:` trong log. Nếu có `pg_advisory_lock` và timeout `10000ms`, Prisma đang chờ khóa migration; tăng timeout kết nối không giải quyết khóa này. Prisma giữ giới hạn chờ khóa 10 giây. [Prisma advisory locking](https://www.prisma.io/docs/orm/v7/prisma-migrate/workflows/development-and-production#advisory-locking).
+
+1. Trong **Render → Environment**, đặt đủ hai biến của **cùng Neon branch/database/role**:
+   - `DATABASE_URL`: URL pooled, hostname có `-pooler`.
+   - `DATABASE_URL_UNPOOLED`: lấy trong Neon **Connect** khi tắt **Connection pooling**, hostname không có `-pooler`.
+2. Giữ tham số SSL do Neon cung cấp. Các file `.env.local` trên máy cá nhân không tự được đưa lên Render. Prisma config hiện báo lỗi ngay nếu URL migration trỏ tới Neon pooler; điều này cũng áp dụng khi build chạy `db:generate`.
+3. Lưu biến và redeploy; tránh chạy nhiều lệnh migration đồng thời. Giữ start command ở bước 5.
+4. Nếu vẫn chờ khóa dù URL đã direct, kiểm tra `pg_locks`/`pg_stat_activity`. Một phiên pooler từ lần migrate trước có thể còn giữ khóa sau khi migration kết thúc. Chỉ kết thúc đúng phiên giữ khóa sau khi xác nhận nó idle, không có transaction và không có migration đang chạy; không restart cả database hoặc tắt advisory locking để bỏ qua lỗi.
+
+Neon khuyến nghị kết nối direct cho migration và các tác vụ cần session state. [Neon connection errors](https://neon.com/docs/connect/connection-errors).
 
 | Triệu chứng | Kiểm tra |
 | --- | --- |

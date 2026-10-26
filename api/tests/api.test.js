@@ -54,6 +54,12 @@ before(async () => {
 beforeEach(async () => { if (db) await db.rateBucket.deleteMany(); });
 after(async () => { await db?.$disconnect(); await fixture?.stop(); });
 
+test('health checks the real PostgreSQL connection without authentication', async () => {
+  const response = await request(app).get('/health');
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { status: 'ok', database: 'up' });
+});
+
 test('Swagger UI and its assets/spec are public and target the current API origin', async () => {
   const page = await request(app).get('/api-docs/');
   assert.equal(page.status, 200);

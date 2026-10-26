@@ -9,3 +9,4 @@ playwright-report/
 api/.data/
 api/src/generated/
 *.log
+.neon

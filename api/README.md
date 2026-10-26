@@ -24,6 +24,8 @@ DATABASE_URL=postgresql://diary:diary@localhost:5432/private_diary
 STORAGE_DRIVER=local
 ```
 
+Nếu đã chạy Neon CLI tại root, API đọc `.env.local`/`.env` ở root trước file tương ứng trong `api/`; biến môi trường được truyền từ shell/hosting có ưu tiên cao nhất. Runtime dùng `DATABASE_URL`, Prisma migration dùng `DATABASE_URL_UNPOOLED` (fallback `DATABASE_URL` cho local). Xem [thiết lập Neon](../docs/neon-setup.md).
+
 PostgreSQL phải chạy và database trong `DATABASE_URL` phải tồn tại. Dùng
 UTF-8 và locale hỗ trợ Unicode, chẳng hạn `C.UTF-8`, để tìm kiếm tiếng Việt
 không phân biệt hoa/thường. Không dùng locale `C` thuần ASCII cho production.

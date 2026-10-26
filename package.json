@@ -1,0 +1,19 @@
+{
+  "name": "private-diary",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "build": "npm --prefix api run db:generate && npm --prefix api run check && npm --prefix web run build",
+    "dev": "node scripts/dev.mjs",
+    "start": "npm --prefix api start",
+    "db:migrate": "npm --prefix api run db:migrate",
+    "db:seed": "npm --prefix api run db:seed",
+    "test:unit": "node --test api/tests/env.test.js && npm --prefix web run test:unit",
+    "test:neon": "node scripts/test-neon.mjs"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.4",
+    "@neon/env": "^1.6.5"
+  }
+}

@@ -11,6 +11,7 @@ import { diariesRouter } from './modules/diaries.js';
 import { imagesRouter } from './modules/images.js';
 import { moodsRouter } from './modules/moods.js';
 import { docsRouter } from './docs.js';
+import { createHealthController } from './controllers/health.js';
 
 export function createApp({ db, config, storage }) {
   const app = express();
@@ -20,6 +21,7 @@ export function createApp({ db, config, storage }) {
   app.set('query parser', 'simple');
   app.use(requestContext);
   app.use(helmet());
+  app.get('/health', createHealthController(db));
   app.use('/api-docs', docsRouter(config));
   app.use(cors({ origin: (origin, callback) => callback(null, Boolean(origin && config.origins.includes(origin))),
     credentials: true, methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],

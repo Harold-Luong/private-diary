@@ -20,6 +20,8 @@ trong `web/` và mở `http://localhost:5173` sau khi khởi động backend.
 
 **Deploy với gói miễn phí:** [Hướng dẫn Cloudflare Pages + Render + Neon + R2](docs/deploy-cloudflare.md) — theo đúng backend Node.js hiện tại, có Pages proxy để cookie đăng nhập hoạt động trên domain `pages.dev`.
 
+**Neon đã kết nối:** [Thiết lập và kiểm chứng Neon](docs/neon-setup.md). Tại root chạy `npm run build`, `npm run dev` để mở cả API/web; `npm start` chỉ chạy API. API tự đọc `.env.local` do Neon CLI tạo ở root, dùng URL pooled cho runtime và unpooled cho Prisma migration.
+
 ## 1. Mục tiêu và phạm vi
 
 Ứng dụng cho phép mỗi người dùng tạo tài khoản và quản lý nhật ký riêng

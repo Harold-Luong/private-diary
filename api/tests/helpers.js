@@ -41,7 +41,7 @@ export async function testDatabase() {
       } finally { await probe.end(); }
     }
     execFileSync(process.execPath, [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy'], {
-      cwd: resolve('.'), env: { ...process.env, DATABASE_URL: url }, stdio: 'pipe', timeout: 60000,
+      cwd: resolve('.'), env: { ...process.env, DATABASE_URL: url, DATABASE_URL_UNPOOLED: url }, stdio: 'pipe', timeout: 60000,
     });
     return { url, storagePath: join(root, 'images'), stop };
   } catch (error) {

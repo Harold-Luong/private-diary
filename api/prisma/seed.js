@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '../src/env.js';
 import { createDb } from '../src/db.js';
 
 export async function seedMoods(db) {
