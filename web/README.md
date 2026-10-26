@@ -30,7 +30,7 @@ Mở **http://localhost:5173**. Vite chuyển tiếp `/api` đến `http://local
 | `/diaries` | Tìm kiếm, lọc trạng thái/ngày/cảm xúc/thẻ, sắp xếp, phân trang |
 | `/diaries/new`, `/diaries/:id/edit` | Viết/sửa, lưu nháp/hoàn chỉnh, chọn ngày/cảm xúc/thẻ, tải/xóa/sắp xếp ảnh |
 | `/diaries/:id` | Đọc nhật ký, ảnh riêng tư, sửa/xóa |
-| `/calendar` | Lịch tháng, chọn ngày để mở nhật ký hoặc viết mới |
+| `/calendar` | Lịch tháng dương/âm Việt Nam, chọn ngày để mở nhật ký hoặc viết mới |
 | `/statistics` | Số bài, ngày viết, hoạt động và phân bố cảm xúc trong tháng |
 | `/settings` | Tên, múi giờ, giao diện, quản lý thẻ |
 
@@ -48,13 +48,27 @@ Refresh cookie HttpOnly do backend quản lý. API vẫn chịu trách nhiệm k
 
 ## Build và triển khai
 
+Xem [hướng dẫn deploy miễn phí](../docs/deploy-cloudflare.md) cho Cloudflare Pages + Pages Function proxy, Render API, Neon và R2. Repo đã có `functions/api/[[path]].js`; trên Pages giữ `VITE_API_BASE_URL=/api/v1` và đặt binding `API_ORIGIN` tới origin HTTPS của backend.
+
 ```sh
 npm run build
 ```
 
 Kết quả ở `dist/`. `public/_redirects` cung cấp SPA fallback cho Cloudflare Pages khi reload đường dẫn sâu. Với host khác, cấu hình fallback về `index.html` tương ứng.
 
-Proxy Vite chỉ phục vụ development. Khi deploy, cấu hình reverse proxy cho `/api`, hoặc đặt `VITE_API_BASE_URL=https://<api-host>/api/v1` **trước khi build**; cấu hình HTTPS, `FRONTEND_URL` và cookie trên backend theo domain thực tế. Không đặt JWT secret hoặc khóa storage trong biến `VITE_*`.
+Proxy Vite chỉ phục vụ development. Pages dùng Function riêng cho `/api/*`; các route tĩnh không chạy Function. Chỉ gọi API trực tiếp bằng `VITE_API_BASE_URL=https://<api-host>/api/v1` khi frontend/API cùng site và đã cấu hình HTTPS, `FRONTEND_URL`, cookie phù hợp. Hai domain `pages.dev` và `onrender.com` cần proxy để refresh cookie SameSite=Lax hoạt động. Không đặt JWT secret hoặc khóa storage trong biến `VITE_*`.
+
+## Âm lịch Việt Nam
+
+Trang lịch hiển thị ngày âm dưới ngày dương, đánh dấu mùng 1/ngày rằm và ghi `N` cho tháng nhuận. Phần ngày được chọn có đủ ngày, tháng, năm âm và tên năm Can Chi. Dữ liệu nhật ký và liên kết viết/lọc vẫn dùng ngày dương.
+
+Chuyển đổi tại frontend bằng [@nghiavuive/lunar_date_vi](https://github.com/nacana22/lunar-date), dùng bảng âm lịch Việt Nam của Hồ Ngọc Đức. Truyền các thành phần ngày/tháng/năm thay vì timestamp UTC để giữ nguyên ngày nhật ký khi người dùng đổi múi giờ. Phạm vi hiển thị âm lịch: 1800–2199; ngoài phạm vi này vẫn xem lịch dương bình thường.
+
+Chạy kiểm tra chuyển đổi (Tết, Trung thu, tháng nhuận, múi giờ và giới hạn ngày):
+
+```sh
+npm run test:unit
+```
 
 ## Kiểm thử trình duyệt
 
@@ -65,4 +79,4 @@ npm run test:e2e
 
 Cần dependencies/Prisma client của `api/` và PostgreSQL binaries local (có thể chỉ định thư mục bằng `PG_BIN`). Test tự mở API cổng `4180`, Vite cổng `4173` và PostgreSQL tạm, migrate/seed, rồi dọn dữ liệu tạm sau khi chạy. Không dùng database trong `api/.env`. Có thể dùng `TEST_DATABASE_URL` trỏ đến database trống, dùng riêng cho test, tên kết thúc `_test`; database này cần được làm trống trước lần chạy tiếp theo.
 
-Nếu Chromium đã cài ngoài Playwright, đặt `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` đến executable. Hai test bao phủ luồng desktop và mobile: auth/refresh, CRUD, ảnh, thẻ, tìm kiếm, lịch, thống kê, theme, cảnh báo chưa lưu, lỗi mạng và retry. Ảnh kiểm tra giao diện ở `test-results/` (đã ignore).
+Nếu Chromium đã cài ngoài Playwright, đặt `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` đến executable. Các test bao phủ luồng desktop và mobile: auth/refresh, CRUD, ảnh, thẻ, tìm kiếm, lịch, thống kê, theme, cảnh báo chưa lưu, lỗi mạng và retry. Test âm lịch dùng dữ liệu giả lập để kiểm tra Tết, tháng nhuận, chọn ngày, lọc trạng thái và bố cục màn hình nhỏ. Ảnh kiểm tra giao diện ở `test-results/` (đã ignore).

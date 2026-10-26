@@ -112,6 +112,8 @@ Blob URL. Content nhật ký là plain text; ảnh gốc chưa loại EXIF/GPS.
 
 ## R2 và vận hành
 
+Hướng dẫn triển khai bản Node.js này với các gói miễn phí: [Cloudflare Pages + Render + Neon + R2](../docs/deploy-cloudflare.md). Pages proxy giữ cookie đăng nhập cùng origin frontend; backend vẫn chạy trên Render.
+
 Đặt `STORAGE_DRIVER=r2` cùng `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`,
 `R2_SECRET_ACCESS_KEY` theo `.env.example`. Bucket phải private, không bật
 public domain. Credentials chỉ cấp quyền đọc/ghi/xóa/list trên bucket cần dùng.

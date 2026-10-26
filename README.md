@@ -18,6 +18,8 @@ JavaScript, Vue Router 4 và Pinia; giao diện tiếng Việt cho auth, nhật 
 ảnh, lịch, thống kê và cài đặt, kết nối API hiện có. Chạy `npm run dev`
 trong `web/` và mở `http://localhost:5173` sau khi khởi động backend.
 
+**Deploy với gói miễn phí:** [Hướng dẫn Cloudflare Pages + Render + Neon + R2](docs/deploy-cloudflare.md) — theo đúng backend Node.js hiện tại, có Pages proxy để cookie đăng nhập hoạt động trên domain `pages.dev`.
+
 ## 1. Mục tiêu và phạm vi
 
 Ứng dụng cho phép mỗi người dùng tạo tài khoản và quản lý nhật ký riêng
